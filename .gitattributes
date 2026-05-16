@@ -1,0 +1,16 @@
+@"
+# Normalize line endings
+* text=auto
+
+# Python files always LF
+*.py text eol=lf
+
+# Terraform files always LF
+*.tf text eol=lf
+
+# Markdown files always LF
+*.md text eol=lf
+
+# JSON files always LF
+*.json text eol=lf
+"@ | Out-File -FilePath ".gitattributes" -Encoding utf8
