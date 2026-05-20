@@ -247,7 +247,7 @@ EventBridge Scheduler (daily cron)
         ↓
 Step Functions State Machine
         ↓
-┌──────────────────────────────────────────────────────────────┐
+┌----------------------------------------------────────────────┐
 │ State 1: Ingest          World Bank API → S3 Bronze (JSON)   │
 │ State 2: Validate Bronze  Great Expectations — row count,    │
 │                           file integrity, no empty responses │
@@ -263,7 +263,7 @@ Step Functions State Machine
 │ State 7: Crawl & Catalog  Glue Crawler → Glue Data Catalog   │
 │                           all 3 layers registered + queryable│
 │ State 8: Notify           SNS → success email                │
-└──────────────────────────────────────────────────────────────┘
+└----------------------------------------------────────────────┘
         ↓ (on ANY state failure)
 SNS Failure Alert → email immediately
         ↓
