@@ -12,3 +12,23 @@ output "project_name" {
   description = "Project name used across all resources"
   value       = var.project_name
 }
+
+output "vpc_id" {
+  description = "VPC ID for Project 102"
+  value       = aws_vpc.main.id
+}
+
+output "private_subnet_1_id" {
+  description = "Private subnet 1 ID - used by Glue jobs"
+  value       = aws_subnet.private_1.id
+}
+
+output "private_subnet_2_id" {
+  description = "Private subnet 2 ID - used by Glue jobs"
+  value       = aws_subnet.private_2.id
+}
+
+output "glue_security_group_id" {
+  description = "Security group ID for Glue jobs"
+  value       = aws_security_group.glue.id
+}
