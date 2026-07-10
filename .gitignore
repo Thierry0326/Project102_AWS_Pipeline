@@ -13,7 +13,8 @@ __pycache__/
 
 # Terraform
 .terraform/
-.terraform.lock.hcl
+# NOTE: .terraform.lock.hcl is intentionally NOT ignored - it pins exact
+# provider versions/checksums for reproducible `terraform init` elsewhere.
 terraform.tfstate
 terraform.tfstate.backup
 *.tfstate

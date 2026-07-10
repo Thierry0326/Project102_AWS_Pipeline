@@ -143,7 +143,36 @@ to JSON. Will be lost on `docker compose down -v`.
 ### 3.1 Repository
 
 - **GitHub:** `github.com/Thierry0326/Project102_AWS_Pipeline`
-- **Status:** Repo created, .gitignore configured, not yet cloned with code
+- **Status:** Phases 0–3 built, deployed, and verified end-to-end against real
+  AWS resources. Phase 4 written and validated but deliberately left disabled.
+
+### 3.1b Actual Implementation Status (as of 2026-07-10)
+
+The plan below in 3.9 was the original design. What actually got built used a
+condensed phase numbering (0–4, matching the git commit history) rather than
+the original 0–9 breakdown — some steps merged, some (data quality
+validation, CDK, MWAA) haven't been built yet. **`README.md` is the
+authoritative as-built reference** (architecture diagram, cost breakdown,
+bugs fixed, how to run); this section is a quick pointer, not a duplicate.
+
+| Phase | Status | What it actually is |
+|---|---|---|
+| 0 — Foundation | ✅ Done | S3 remote state (native S3 locking, not DynamoDB), budget alarms, Terraform skeleton |
+| 1 — Storage & Network | ✅ Done | 3 S3 buckets w/ versioning+lifecycle, VPC + private subnets + S3 Gateway Endpoint + Glue SG, Secrets Manager configs |
+| 2 — Glue ETL | ✅ Done | 3 PySpark Glue jobs (bronze_ingest/silver_transform/gold_model), Glue IAM role, Data Catalog + 5 crawlers |
+| 3 — Orchestration | ✅ Done, verified live | Step Functions (5 states: 3 Glue jobs → 5 parallel crawlers → SNS notify), retry/catch on every state |
+| 4 — Scheduling | ⏸️ Built, disabled | EventBridge daily-cron rule in `eventbridge.tf`, commented out on purpose — pipeline only runs when triggered manually |
+| — Data quality validation | ⬜ Not built | Great Expectations / Glue DQ states between layers — planned in 3.6 below, not implemented |
+| — CDK | ⬜ Not built | Terraform only |
+| — CI/CD | ⬜ Not built | Deploys are manual `terraform apply` |
+| — Grafana/Power BI dashboards | ⬜ Not built | Athena queries verified working manually; no dashboard yet |
+
+**Verified working:** a full green execution completed in ~8m47s; SNS
+success email received; Athena queries against the Gold star schema confirmed
+working. 5 real bugs were found and fixed getting there (urllib3 version
+mismatch, a flaky upstream API, invalid AWS tag characters, a Step Functions
+JSONPath nesting bug, and a misleading execution-status bug) — full list in
+`README.md`.
 
 ### 3.2 Project Statement
 
@@ -186,25 +215,26 @@ income countries?"*
 
 ### 3.4 Architecture — Project 101 vs Project 102
 
-The same Medallion Architecture, every tool replaced by its AWS equivalent:
+The same Medallion Architecture, every tool replaced by its AWS equivalent.
+Status column added post-build — see 3.1b for the full picture:
 
-| Project 101 (Local Docker) | Project 102 (AWS Serverless) |
-|---|---|
-| Stack Overflow CSV | World Bank API (JSON) |
-| SQL Server (Bronze) | S3 Bronze (raw JSON) |
-| `transform.py` in Docker | AWS Glue Python Shell Job |
-| MySQL Silver (5 tables) | S3 Silver (cleaned Parquet) |
-| MySQL Gold (star schema) | S3 Gold (dimensional Parquet) |
-| `mysql_schema.sql` | Glue Data Catalog |
-| MySQL Workbench queries | Amazon Athena (SQL on S3) |
-| Airflow DAG (8 tasks) | Step Functions (8 states) |
-| Airflow cron schedule | EventBridge Scheduler |
-| `notify_success` task | SNS email notification |
-| `.env` file | AWS Secrets Manager |
-| `docker-compose.yml` | Terraform + AWS CDK (Python) |
-| GitHub Actions (tests) | GitHub Actions (plan + deploy) |
-| Great Expectations | Great Expectations + Glue DQ |
-| Grafana → MySQL | Grafana → Athena (local Docker) |
+| Project 101 (Local Docker) | Project 102 (AWS Serverless) | Status |
+|---|---|---|
+| Stack Overflow CSV | World Bank API (JSON) | ✅ built |
+| SQL Server (Bronze) | S3 Bronze (raw JSON) | ✅ built |
+| `transform.py` in Docker | AWS Glue PySpark Job | ✅ built |
+| MySQL Silver (5 tables) | S3 Silver (cleaned Parquet) | ✅ built |
+| MySQL Gold (star schema) | S3 Gold (dimensional Parquet) | ✅ built |
+| `mysql_schema.sql` | Glue Data Catalog | ✅ built |
+| MySQL Workbench queries | Amazon Athena (SQL on S3) | ✅ built, verified |
+| Airflow DAG (8 tasks) | Step Functions (5 states) | ✅ built, verified live |
+| Airflow cron schedule | EventBridge Rule (daily cron) | ⏸️ built, disabled |
+| `notify_success` task | SNS email notification | ✅ built, verified |
+| `.env` file | AWS Secrets Manager | ✅ built |
+| `docker-compose.yml` | Terraform | ✅ built (CDK not built) |
+| GitHub Actions (tests) | GitHub Actions (plan + deploy) | ⬜ not built |
+| Great Expectations | Great Expectations + Glue DQ | ⬜ not built |
+| Grafana → MySQL | Grafana → Athena / Power BI | ⬜ not built |
 
 **Key insight:** From a data analyst's perspective Athena IS the database.
 They connect Power BI or Grafana to Athena exactly like a SQL database.
@@ -212,35 +242,51 @@ The fact that data sits as Parquet files in S3 underneath is invisible to them.
 
 ### 3.5 Gold Layer Data Model
 
+**As actually built** (`glue_jobs/job_gold_model.py`) — leaner than the
+original design below: no `region`/`income_group` on `dim_country`, no
+`category` on `dim_indicator`. Those fields aren't populated by the World
+Bank API response and were dropped rather than faked.
+
 ```sql
 dim_country
-    country_id      INT (PK)
+    country_id      INT (PK, surrogate)
     country_code    VARCHAR   -- e.g. "CMR"
     country_name    VARCHAR   -- e.g. "Cameroon"
-    region          VARCHAR   -- e.g. "Sub-Saharan Africa"
-    income_group    VARCHAR   -- e.g. "Lower middle income"
 
 dim_indicator
-    indicator_id    INT (PK)
+    indicator_id    INT (PK, surrogate)
     indicator_code  VARCHAR   -- e.g. "SP.DYN.LE00.IN"
     indicator_name  VARCHAR   -- e.g. "Life expectancy at birth"
-    category        VARCHAR   -- Health / Economy / Education / Demographics
 
 dim_year
-    year_id         INT (PK)
+    year_id         INT (PK, surrogate)
     year            INT       -- e.g. 2023
-    decade          VARCHAR   -- e.g. "2020s"
+    decade          INT       -- e.g. 2020 (floor(year/10)*10)
 
 fact_world_bank
-    fact_id         INT (PK)
+    fact_id         STRING (PK, uuid)
     country_id      INT (FK → dim_country)
     indicator_id    INT (FK → dim_indicator)
     year_id         INT (FK → dim_year)
-    value           FLOAT
-    loaded_at       TIMESTAMP
+    value           DOUBLE
+    _ingested_at    STRING (ISO timestamp)
 ```
 
+If `region`/`income_group`/`category` enrichment is wanted later, it'd need
+a separate reference dataset (World Bank's country metadata endpoint, or a
+static lookup) joined in during the Gold build — not something the
+indicator API responses carry.
+
 ### 3.6 Pipeline Architecture Flow
+
+⚠️ **This was the original design.** The data quality validation states
+(2, 4, 6 below) were never built — the actual Step Functions definition
+goes straight Ingest → Transform → Transform → Crawl → Notify, 5 states
+total, no GE/DQ gates between layers. EventBridge is a classic
+`aws_cloudwatch_event_rule`, not "EventBridge Scheduler", and it's disabled.
+See `infrastructure/terraform/state_machine/pipeline.asl.json` and the
+architecture diagram in `README.md` for the as-built flow. Kept below as
+the target design if validation states get added later.
 
 ```
 EventBridge Scheduler (daily cron)
@@ -327,50 +373,64 @@ If you can't finish it, you don't need X.
 **Our pipeline is serverless because:** it runs once daily, each job
 takes minutes, nothing needs to be always-on. Zero cost when idle.
 
-### 3.9 Phased Plan
+### 3.9 Phased Plan (original 0–9 design)
 
-| Phase | Focus | Est. cost |
-|---|---|---|
-| 0 | ✅ Budget alarms set · IAM setup · Terraform skeleton · CDK skeleton | Free |
-| 1 | S3 buckets (3-tier) · lifecycle rules · VPC + S3 Gateway Endpoint · Secrets Manager | ~$0 |
-| 2 | World Bank API → S3 Bronze · Glue Crawler · Athena query · GE validation | ~$0 |
-| 3 | Glue job: Bronze → Silver Parquet · Glue DQ rules | ~$0.01/run |
-| 4 | Glue job: Silver → Gold Parquet · dim/fact build · Glue DQ rules | ~$0.01/run |
-| 5 | Step Functions state machine + EventBridge daily cron · end-to-end test | Free |
-| 6 | SNS failure alerts · CloudWatch 7-day retention · CloudWatch dashboard | Free |
-| 7 | Local Grafana → Athena · Dashboard 1 (Africa trends) · Dashboard 2 (Health) | Free |
-| 8 | GitHub Actions: PR → plan/diff · merge → apply/deploy | Free |
-| 9 | *(optional)* MWAA 1-week experiment · document vs Step Functions · destroy | ~$20 |
+This is the plan as originally scoped. **It was not followed 1:1** — see
+3.1b for what was actually built, under a condensed 0–4 numbering. Rough
+mapping: original phases 0–1 → actual Phase 0–1; original 2–4 (ingest,
+Bronze→Silver, Silver→Gold, all with GE/DQ validation) → actual Phase 2
+(built without the validation steps); original phase 5 → actual Phase 3
+(Step Functions built; EventBridge from phase 5 became actual Phase 4,
+disabled); original phases 6–9 (CloudWatch dashboard, Grafana, CI/CD, MWAA)
+are not built.
 
-**Current status: Phase 0 in progress**
-- ✅ AWS account active
-- ✅ Budget alarms set ($1 zero-spend + $10 forecast)
-- ✅ GitHub repo created: `Project102_AWS_Pipeline`
-- ✅ .gitignore configured (Python template)
-- ⬜ IAM setup — next step
+| Phase | Focus | Est. cost | Status |
+|---|---|---|---|
+| 0 | Budget alarms set · IAM setup · Terraform skeleton · CDK skeleton | Free | ✅ done (CDK skeleton skipped) |
+| 1 | S3 buckets (3-tier) · lifecycle rules · VPC + S3 Gateway Endpoint · Secrets Manager | ~$0 | ✅ done |
+| 2 | World Bank API → S3 Bronze · Glue Crawler · Athena query · GE validation | ~$0 | ✅ done (GE validation skipped) |
+| 3 | Glue job: Bronze → Silver Parquet · Glue DQ rules | ~$0.01/run | ✅ done (DQ rules skipped) |
+| 4 | Glue job: Silver → Gold Parquet · dim/fact build · Glue DQ rules | ~$0.01/run | ✅ done (DQ rules skipped) |
+| 5 | Step Functions state machine + EventBridge daily cron · end-to-end test | Free | ✅ Step Functions verified live; EventBridge built but disabled |
+| 6 | SNS failure alerts · CloudWatch 7-day retention · CloudWatch dashboard | Free | ✅ SNS alerts verified; CloudWatch dashboard not built |
+| 7 | Local Grafana → Athena · Dashboard 1 (Africa trends) · Dashboard 2 (Health) | Free | ⬜ not built |
+| 8 | GitHub Actions: PR → plan/diff · merge → apply/deploy | Free | ⬜ not built |
+| 9 | *(optional)* MWAA 1-week experiment · document vs Step Functions · destroy | ~$20 | ⬜ not started (folded into Project 103 plan) |
+
+**Current status as of 2026-07-10: Phases 0–3 complete and verified,
+Phase 4 built but disabled. AWS resources were live and idle-cost-verified
+(~$0.80/mo) through this point, then torn down via `terraform destroy`
+at the end of this work session per the habit below.**
 
 ### 3.10 Cost Traps — Handle on Day One
 
 - ✅ **AWS Budgets alarm** — done
-- ⬜ **NAT Gateway = $32/mo minimum** — use S3 Gateway Endpoint (free)
-- ⬜ **CloudWatch log retention** — set every log group to 7 days
-- ⬜ **S3 lifecycle rules** — Bronze → Glacier after 30 days
-- ⬜ **`terraform destroy` habit** — run at end of every work session
-- ⬜ **Free tier cliffs** — avoid RDS and EC2 for core pipeline
+- ✅ **NAT Gateway = $32/mo minimum** — avoided; S3 Gateway Endpoint (free)
+  used instead. Tradeoff: Glue jobs aren't wired into the private VPC as a
+  result (Bronze Ingest needs public internet for the World Bank API) — see
+  3.1b and `vpc.tf` comments.
+- ⬜ **CloudWatch log retention** — Glue jobs log via `--enable-continuous-cloudwatch-log`; explicit 7-day retention on the log group not yet set
+- ✅ **S3 lifecycle rules** — Bronze → Glacier IR after 30 days, done
+- ✅ **`terraform destroy` habit** — practiced at the end of this work session (see 3.9)
+- ⬜ **Free tier cliffs** — avoid RDS and EC2 for core pipeline (n/a so far — no RDS/EC2 used)
 
 ### 3.11 Monthly Cost Estimate
 
-| Service | Monthly cost |
-|---|---|
-| S3 (all 3 buckets) | ~$0.01 |
-| AWS Glue (2 jobs, daily runs) | ~$0.50 |
-| Amazon Athena (queries) | ~$0.01 |
-| Step Functions | Free tier |
-| EventBridge Scheduler | Free tier |
-| SNS | Free tier |
-| CloudWatch | Free tier |
-| Secrets Manager | ~$0.80 |
-| **Total** | **~$1.50–3/month** |
+Real numbers, verified against an actual run (see `README.md` for the full
+breakdown) rather than the original pre-build estimate:
+
+| Service | Monthly cost | Notes |
+|---|---|---|
+| S3 (3 buckets) | ~$0.01 | Current data volume |
+| AWS Glue (3 jobs + 5 crawlers per run) | ~$0.07–0.19/run | Only incurred when manually triggered — no schedule active |
+| Amazon Athena (queries) | ~$0.01 | Pay-per-query, negligible at this volume |
+| Step Functions, SNS | Free tier | |
+| Secrets Manager (2 secrets) | ~$0.80/mo | **Dominant idle cost** — the only thing billed with zero pipeline activity |
+| **Idle total (no schedule, as currently deployed)** | **~$0.80/mo** | |
+| **If Phase 4 daily schedule is enabled** | **~$1.50–3/mo** | ~$0.15/run × 30 days + idle cost |
+
+**Verified full run:** ~8m47s wall-clock, 3 Glue jobs + 5 crawlers, well
+under a cent in Glue DPU charges per the actual job-run DPU-hours observed.
 
 ---
 
@@ -408,55 +468,56 @@ When starting a new AI session, paste this file at the top with:
 
 ---
 
-## 6. Repo Structure (Project 102 — target)
+## 6. Repo Structure (Project 102 — as actually built)
+
+CDK, `validation/`, a top-level `step_functions/` dir, and `.github/workflows/`
+were part of the original target and were never created — Terraform-only,
+no CDK; no data quality validation; no CI/CD yet.
 
 ```
 Project102_AWS_Pipeline/
-├── infrastructure/
-│   ├── terraform/              # Terraform IaC
-│   │   ├── main.tf
-│   │   ├── variables.tf
-│   │   ├── outputs.tf
-│   │   └── backend.tf          # S3 remote state
-│   └── cdk/                    # CDK IaC (Python)
-│       ├── app.py
-│       └── stacks/
 ├── glue_jobs/
-│   ├── ingest.py               # World Bank API → S3 Bronze
-│   ├── transform_silver.py     # Bronze → Silver Parquet
-│   └── transform_gold.py       # Silver → Gold Parquet (dim/fact)
-├── validation/
-│   ├── great_expectations/     # Bronze + Silver GE checks
-│   └── glue_dq_rules/          # Silver + Gold Glue DQ rules
-├── step_functions/
-│   └── state_machine.json      # Step Functions definition
-├── .github/
-│   └── workflows/
-│       └── deploy.yml          # CI/CD: plan on PR, apply on merge
-├── docs/
-│   ├── PROJECT_CONTEXT.md      # This file
-│   └── TROUBLESHOOTING.md      # Issues encountered + fixes
-├── .env.example                # Template only — never real secrets
-├── .gitignore                  # Python + Terraform + CDK
-└── README.md
+│   ├── job_bronze_ingest.py      # World Bank API → S3 Bronze
+│   ├── job_silver_transform.py   # Bronze JSON → Silver Parquet
+│   └── job_gold_model.py         # Silver → Gold star schema
+├── infrastructure/terraform/
+│   ├── backend.tf                # S3 remote state (native S3 locking)
+│   ├── main.tf                   # Provider + default tags
+│   ├── variables.tf / outputs.tf
+│   ├── s3.tf                     # Bronze/Silver/Gold buckets
+│   ├── vpc.tf                    # Private subnets, S3 Gateway Endpoint (unused by Glue - see 3.1b)
+│   ├── secrets.tf                # Secrets Manager configs
+│   ├── glue.tf / glue_iam.tf / glue_crawler.tf
+│   ├── s3_glue_scripts_append.tf # Glue script bucket + aws_s3_object uploads
+│   ├── sns.tf                    # Success/failure topics
+│   ├── step_functions.tf         # State machine + IAM
+│   ├── eventbridge.tf            # Daily schedule - commented out, not applied
+│   └── state_machine/pipeline.asl.json
+├── PROJECT_CONTEXT.md            # This file
+├── PROJECT_CONTEXT_Mermaid.md / project102_mermaid.md  # Architecture diagrams
+├── TROUBLESHOOTING.md            # Phase 0-1 issue log
+├── Change_to_md.py / claude_codebase.md  # Codebase-dump utility for AI chat sessions
+├── .gitignore
+└── README.md                     # As-built architecture, cost, how-to-run
 ```
 
 ---
 
-## 7. Key Files Reference (Project 101 — for porting logic)
+## 7. Key Files Reference (Project 101 → Project 102, actual mapping)
 
-| File | What to port into Project 102 |
+| Project 101 file | Ported into Project 102 as |
 |---|---|
-| `pipeline/extract.py` | Ingest pattern → `glue_jobs/ingest.py` |
-| `pipeline/transform.py` | Cleaning logic → `glue_jobs/transform_silver.py` |
-| `pipeline/load_mysql.py` | Gold build logic → `glue_jobs/transform_gold.py` |
-| `dags/etl_pipeline.py` | DAG structure → `step_functions/state_machine.json` |
-| `docs/TROUBLESHOOTING.md` | Reference for debugging patterns |
+| `pipeline/extract.py` | `glue_jobs/job_bronze_ingest.py` |
+| `pipeline/transform.py` | `glue_jobs/job_silver_transform.py` |
+| `pipeline/load_mysql.py` | `glue_jobs/job_gold_model.py` |
+| `dags/etl_pipeline.py` | `infrastructure/terraform/state_machine/pipeline.asl.json` |
+| `docs/TROUBLESHOOTING.md` | `TROUBLESHOOTING.md` (Phase 0-1 issues; Phase 2-3 bugs logged in `README.md` instead) |
 
 ---
 
-_Last updated: 2026-05-04_
-_Status: Project 101 complete ✅ | Project 102 Phase 0 in progress 🔄 | Project 103 planned ⬜_
+_Last updated: 2026-07-10_
+_Status: Project 101 complete ✅ | Project 102 Phases 0-3 complete & verified ✅, Phase 4 built but disabled ⏸️ | Project 103 planned ⬜_
 _Dataset P101: Stack Overflow 2020 Developer Survey_
 _Dataset P102: World Bank Development Indicators API_
 _Maintainer: Thierry — github.com/Thierry0326_
+_AWS resources for Project 102 were torn down via `terraform destroy` at the end of the 2026-07-10 session — re-run `terraform apply` to redeploy before resuming._
