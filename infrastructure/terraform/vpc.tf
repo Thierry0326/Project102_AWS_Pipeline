@@ -4,6 +4,15 @@
 # Project 101 equivalent: Docker network created by docker-compose.yml
 # What AWS adds: spans multiple data centers, fine-grained routing rules,
 # security groups control traffic at resource level
+#
+# STATUS (Phase 3): built but NOT yet attached to the Glue jobs (glue.tf has
+# no `connections` block referencing aws_security_group.glue / the private
+# subnets). This is intentional for now, not a bug - job_bronze_ingest.py
+# calls the public World Bank API, and these private subnets have no NAT/IGW,
+# so Bronze Ingest cannot run fully private without adding a NAT Gateway
+# (~$32/mo). Revisit if/when network hardening is worth that cost.
+# Known follow-up if you do wire this up later: aws_vpc_endpoint.s3 below has
+# no route_table_ids, so it isn't associated with any route table yet either.
 
 # ----------------------------------------------
 # VPC - The private network container

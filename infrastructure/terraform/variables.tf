@@ -19,3 +19,9 @@ variable "environment" {
   type        = string
   default     = "dev"
 }
+
+variable "alert_email" {
+  description = "Email address for pipeline success/failure SNS notifications"
+  type        = string
+  default     = "samathierry00@gmail.com"
+}

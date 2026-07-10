@@ -1,0 +1,415 @@
+{
+  "Comment": "Project 102 pipeline: Bronze ingest -> Silver transform -> Gold model -> Crawl & Catalog -> Notify. Mirrors the Project 101 Airflow DAG (extract -> load -> transform -> load -> validate -> notify) but as native AWS state with built-in retry. Each crawler poll loop is capped at 20 attempts (~10 min) so a stuck crawler fails loudly instead of polling forever.",
+  "StartAt": "BronzeIngest",
+  "States": {
+    "BronzeIngest": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "project102-bronze-ingest"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "SilverTransform"
+    },
+
+    "SilverTransform": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "project102-silver-transform"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "GoldModel"
+    },
+
+    "GoldModel": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "project102-gold-model"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "CrawlAndCatalog"
+    },
+
+    "CrawlAndCatalog": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "CrawlSilver",
+          "States": {
+            "CrawlSilver": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+              "Parameters": { "Name": "project102-silver-crawler" },
+              "Next": "InitSilverPollCount"
+            },
+            "InitSilverPollCount": {
+              "Type": "Pass",
+              "Result": 0,
+              "ResultPath": "$.pollCount",
+              "Next": "WaitSilverCrawler"
+            },
+            "WaitSilverCrawler": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "CheckSilverCrawler"
+            },
+            "CheckSilverCrawler": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+              "Parameters": { "Name": "project102-silver-crawler" },
+              "ResultPath": "$.CrawlerStatus",
+              "Next": "IsSilverCrawlerDone"
+            },
+            "IsSilverCrawlerDone": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.CrawlerStatus.Crawler.State",
+                  "StringEquals": "READY",
+                  "Next": "SilverCrawlerDone"
+                },
+                {
+                  "Variable": "$.pollCount",
+                  "NumericGreaterThanEquals": 20,
+                  "Next": "SilverCrawlerTimedOut"
+                }
+              ],
+              "Default": "IncrementSilverPollCount"
+            },
+            "IncrementSilverPollCount": {
+              "Type": "Pass",
+              "Parameters": {
+                "pollCount.$": "States.MathAdd($.pollCount, 1)"
+              },
+              "ResultPath": "$",
+              "Next": "WaitSilverCrawler"
+            },
+            "SilverCrawlerTimedOut": {
+              "Type": "Fail",
+              "Error": "CrawlerTimeout",
+              "Cause": "Silver crawler did not reach READY after 20 polls (~10 minutes)"
+            },
+            "SilverCrawlerDone": { "Type": "Succeed" }
+          }
+        },
+        {
+          "StartAt": "CrawlGoldCountry",
+          "States": {
+            "CrawlGoldCountry": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+              "Parameters": { "Name": "project102-gold-dim-country" },
+              "Next": "InitGoldCountryPollCount"
+            },
+            "InitGoldCountryPollCount": {
+              "Type": "Pass",
+              "Result": 0,
+              "ResultPath": "$.pollCount",
+              "Next": "WaitGoldCountry"
+            },
+            "WaitGoldCountry": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "CheckGoldCountry"
+            },
+            "CheckGoldCountry": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+              "Parameters": { "Name": "project102-gold-dim-country" },
+              "ResultPath": "$.CrawlerStatus",
+              "Next": "IsGoldCountryDone"
+            },
+            "IsGoldCountryDone": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.CrawlerStatus.Crawler.State",
+                  "StringEquals": "READY",
+                  "Next": "GoldCountryDone"
+                },
+                {
+                  "Variable": "$.pollCount",
+                  "NumericGreaterThanEquals": 20,
+                  "Next": "GoldCountryTimedOut"
+                }
+              ],
+              "Default": "IncrementGoldCountryPollCount"
+            },
+            "IncrementGoldCountryPollCount": {
+              "Type": "Pass",
+              "Parameters": {
+                "pollCount.$": "States.MathAdd($.pollCount, 1)"
+              },
+              "ResultPath": "$",
+              "Next": "WaitGoldCountry"
+            },
+            "GoldCountryTimedOut": {
+              "Type": "Fail",
+              "Error": "CrawlerTimeout",
+              "Cause": "Gold dim_country crawler did not reach READY after 20 polls (~10 minutes)"
+            },
+            "GoldCountryDone": { "Type": "Succeed" }
+          }
+        },
+        {
+          "StartAt": "CrawlGoldIndicator",
+          "States": {
+            "CrawlGoldIndicator": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+              "Parameters": { "Name": "project102-gold-dim-indicator" },
+              "Next": "InitGoldIndicatorPollCount"
+            },
+            "InitGoldIndicatorPollCount": {
+              "Type": "Pass",
+              "Result": 0,
+              "ResultPath": "$.pollCount",
+              "Next": "WaitGoldIndicator"
+            },
+            "WaitGoldIndicator": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "CheckGoldIndicator"
+            },
+            "CheckGoldIndicator": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+              "Parameters": { "Name": "project102-gold-dim-indicator" },
+              "ResultPath": "$.CrawlerStatus",
+              "Next": "IsGoldIndicatorDone"
+            },
+            "IsGoldIndicatorDone": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.CrawlerStatus.Crawler.State",
+                  "StringEquals": "READY",
+                  "Next": "GoldIndicatorDone"
+                },
+                {
+                  "Variable": "$.pollCount",
+                  "NumericGreaterThanEquals": 20,
+                  "Next": "GoldIndicatorTimedOut"
+                }
+              ],
+              "Default": "IncrementGoldIndicatorPollCount"
+            },
+            "IncrementGoldIndicatorPollCount": {
+              "Type": "Pass",
+              "Parameters": {
+                "pollCount.$": "States.MathAdd($.pollCount, 1)"
+              },
+              "ResultPath": "$",
+              "Next": "WaitGoldIndicator"
+            },
+            "GoldIndicatorTimedOut": {
+              "Type": "Fail",
+              "Error": "CrawlerTimeout",
+              "Cause": "Gold dim_indicator crawler did not reach READY after 20 polls (~10 minutes)"
+            },
+            "GoldIndicatorDone": { "Type": "Succeed" }
+          }
+        },
+        {
+          "StartAt": "CrawlGoldYear",
+          "States": {
+            "CrawlGoldYear": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+              "Parameters": { "Name": "project102-gold-dim-year" },
+              "Next": "InitGoldYearPollCount"
+            },
+            "InitGoldYearPollCount": {
+              "Type": "Pass",
+              "Result": 0,
+              "ResultPath": "$.pollCount",
+              "Next": "WaitGoldYear"
+            },
+            "WaitGoldYear": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "CheckGoldYear"
+            },
+            "CheckGoldYear": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+              "Parameters": { "Name": "project102-gold-dim-year" },
+              "ResultPath": "$.CrawlerStatus",
+              "Next": "IsGoldYearDone"
+            },
+            "IsGoldYearDone": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.CrawlerStatus.Crawler.State",
+                  "StringEquals": "READY",
+                  "Next": "GoldYearDone"
+                },
+                {
+                  "Variable": "$.pollCount",
+                  "NumericGreaterThanEquals": 20,
+                  "Next": "GoldYearTimedOut"
+                }
+              ],
+              "Default": "IncrementGoldYearPollCount"
+            },
+            "IncrementGoldYearPollCount": {
+              "Type": "Pass",
+              "Parameters": {
+                "pollCount.$": "States.MathAdd($.pollCount, 1)"
+              },
+              "ResultPath": "$",
+              "Next": "WaitGoldYear"
+            },
+            "GoldYearTimedOut": {
+              "Type": "Fail",
+              "Error": "CrawlerTimeout",
+              "Cause": "Gold dim_year crawler did not reach READY after 20 polls (~10 minutes)"
+            },
+            "GoldYearDone": { "Type": "Succeed" }
+          }
+        },
+        {
+          "StartAt": "CrawlGoldFact",
+          "States": {
+            "CrawlGoldFact": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+              "Parameters": { "Name": "project102-gold-fact-world-bank" },
+              "Next": "InitGoldFactPollCount"
+            },
+            "InitGoldFactPollCount": {
+              "Type": "Pass",
+              "Result": 0,
+              "ResultPath": "$.pollCount",
+              "Next": "WaitGoldFact"
+            },
+            "WaitGoldFact": {
+              "Type": "Wait",
+              "Seconds": 30,
+              "Next": "CheckGoldFact"
+            },
+            "CheckGoldFact": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+              "Parameters": { "Name": "project102-gold-fact-world-bank" },
+              "ResultPath": "$.CrawlerStatus",
+              "Next": "IsGoldFactDone"
+            },
+            "IsGoldFactDone": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.CrawlerStatus.Crawler.State",
+                  "StringEquals": "READY",
+                  "Next": "GoldFactDone"
+                },
+                {
+                  "Variable": "$.pollCount",
+                  "NumericGreaterThanEquals": 20,
+                  "Next": "GoldFactTimedOut"
+                }
+              ],
+              "Default": "IncrementGoldFactPollCount"
+            },
+            "IncrementGoldFactPollCount": {
+              "Type": "Pass",
+              "Parameters": {
+                "pollCount.$": "States.MathAdd($.pollCount, 1)"
+              },
+              "ResultPath": "$",
+              "Next": "WaitGoldFact"
+            },
+            "GoldFactTimedOut": {
+              "Type": "Fail",
+              "Error": "CrawlerTimeout",
+              "Cause": "Gold fact_world_bank crawler did not reach READY after 20 polls (~10 minutes)"
+            },
+            "GoldFactDone": { "Type": "Succeed" }
+          }
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "NotifySuccess"
+    },
+
+    "NotifySuccess": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${success_topic_arn}",
+        "Subject": "Project 102 Pipeline SUCCESS",
+        "Message": "Bronze -> Silver -> Gold -> Crawlers all completed successfully. Data is fresh in Athena."
+      },
+      "End": true
+    },
+
+    "NotifyFailure": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sns:publish",
+      "Parameters": {
+        "TopicArn": "${failure_topic_arn}",
+        "Subject": "Project 102 Pipeline FAILED",
+        "Message.$": "States.Format('Pipeline failed. Error details: {}', $.error)"
+      },
+      "ResultPath": null,
+      "Next": "PipelineFailed"
+    },
+
+    "PipelineFailed": {
+      "Type": "Fail",
+      "Error": "PipelineFailed",
+      "Cause": "One or more pipeline stages failed - see the SNS failure notification and CloudWatch logs for details"
+    }
+  }
+}
