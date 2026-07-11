@@ -99,9 +99,37 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
         ]
       },
       {
+        # Enumerated instead of s3:* (Trivy AWS-0345) - s3:* includes
+        # bucket-management actions (ACLs, bucket policy) well beyond what
+        # Terraform actually calls for the resources in s3.tf and
+        # s3_glue_scripts_append.tf. Not a guarantee this list is
+        # exhaustive - a missing action would surface as AccessDenied in
+        # CI, same as any other permission gap in this project got found.
         Sid    = "S3DataBuckets"
         Effect = "Allow"
-        Action = "s3:*"
+        Action = [
+          "s3:CreateBucket",
+          "s3:DeleteBucket",
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+          "s3:GetBucketTagging",
+          "s3:PutBucketTagging",
+          "s3:GetBucketVersioning",
+          "s3:PutBucketVersioning",
+          "s3:GetLifecycleConfiguration",
+          "s3:PutLifecycleConfiguration",
+          "s3:GetEncryptionConfiguration",
+          "s3:PutEncryptionConfiguration",
+          "s3:GetBucketPublicAccessBlock",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:GetObjectTagging",
+          "s3:PutObjectTagging",
+          "s3:GetObjectVersion",
+          "s3:DeleteObjectVersion"
+        ]
         Resource = [
           "arn:aws:s3:::project102-*",
           "arn:aws:s3:::project102-*/*"
@@ -194,6 +222,18 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
         Sid      = "AccountDiscovery"
         Effect   = "Allow"
         Action   = "sts:GetCallerIdentity"
+        Resource = "*"
+      },
+      {
+        # Read-only - needed for the data "aws_kms_alias" "sns" lookup in
+        # sns.tf (AWS-managed key, no project102-* name to scope by, and
+        # ListAliases doesn't support resource-level restriction anyway).
+        Sid    = "ReadAwsManagedKmsAlias"
+        Effect = "Allow"
+        Action = [
+          "kms:ListAliases",
+          "kms:DescribeKey"
+        ]
         Resource = "*"
       }
     ]

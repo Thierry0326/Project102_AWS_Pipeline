@@ -36,6 +36,21 @@ resource "aws_s3_bucket_versioning" "bronze" {
   }
 }
 
+# Makes explicit what AWS already applies by default (SSE-S3 on every
+# bucket since 2023) rather than leaving it implicit/unaudited. AWS-0132
+# wants a customer-managed KMS key instead - skipped deliberately, same
+# reasoning as s3_glue_scripts_append.tf: no sensitive data, no compliance
+# need for custom key rotation, ~$1/mo per key for no real payoff here.
+# trivy:ignore:AWS-0132
+resource "aws_s3_bucket_server_side_encryption_configuration" "bronze" {
+  bucket = aws_s3_bucket.bronze.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 # Lifecycle rule — move Bronze to Glacier after 30 days
 # Bronze is raw/untouched data we rarely query
 # Glacier = ~$0.004/GB vs S3 standard ~$0.023/GB
@@ -86,6 +101,17 @@ resource "aws_s3_bucket_versioning" "silver" {
   }
 }
 
+# See bronze's identical block above for the AWS-0132 suppression reasoning.
+# trivy:ignore:AWS-0132
+resource "aws_s3_bucket_server_side_encryption_configuration" "silver" {
+  bucket = aws_s3_bucket.silver.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 # ----------------------------------------------
 # GOLD BUCKET - Dimensional Parquet (Analytics)
 # ----------------------------------------------
@@ -112,5 +138,17 @@ resource "aws_s3_bucket_versioning" "gold" {
 
   versioning_configuration {
     status = "Enabled"
+  }
+}
+
+# See bronze's identical block near the top of this file for the AWS-0132
+# suppression reasoning.
+# trivy:ignore:AWS-0132
+resource "aws_s3_bucket_server_side_encryption_configuration" "gold" {
+  bucket = aws_s3_bucket.gold.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
   }
 }

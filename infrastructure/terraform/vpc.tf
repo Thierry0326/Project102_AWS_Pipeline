@@ -81,15 +81,21 @@ resource "aws_security_group" "glue" {
   description = "Security group for Project 102 Glue jobs"
   vpc_id      = aws_vpc.main.id
 
-  # Allow all outbound traffic from Glue jobs
-  # Glue needs to reach S3 (via endpoint) and
-  # CloudWatch (for logs)
+  # HTTPS-only outbound - everything this SG's jobs talk to (S3, Secrets
+  # Manager, CloudWatch Logs, and the World Bank API for Bronze Ingest) is
+  # HTTPS. Narrowed from all-ports/all-protocols so a compromised job
+  # environment can't open arbitrary outbound connections.
+  #
+  # 0.0.0.0/0 as a *destination* is still required and unavoidable here -
+  # none of those endpoints have fixed/predictable IPs to pin to, and this
+  # SG isn't currently attached to anything anyway (see the file header).
+  # trivy:ignore:AWS-0104
   egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow all outbound - S3 via endpoint, CloudWatch for logs"
+    description = "HTTPS outbound only - AWS service APIs + World Bank API, no fixed destination IPs available"
   }
 
   tags = {

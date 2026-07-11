@@ -17,6 +17,12 @@ resource "aws_s3_bucket_versioning" "glue_scripts" {
   }
 }
 
+# AWS-0132 wants SSE-KMS with a customer-managed key instead of SSE-S3
+# (AES256, AWS-managed, free). Skipped deliberately, same reasoning as the
+# SNS topics in sns.tf: this bucket only holds 3 Python scripts, no
+# sensitive data or compliance need for custom key rotation - ~$1/mo for
+# no real security payoff here.
+# trivy:ignore:AWS-0132
 resource "aws_s3_bucket_server_side_encryption_configuration" "glue_scripts" {
   bucket = aws_s3_bucket.glue_scripts.id
   rule {
