@@ -77,14 +77,31 @@ jobs:
       # (and therefore, once branch protection is on, blocks the merge)
       # on CRITICAL/HIGH findings. Same engine/check IDs as the
       # now-deprecated tfsec, under Aqua Security's Trivy.
-      - name: Trivy IaC security scan
+      # Two separate Trivy runs, not one - format: sarif does NOT reflect
+      # #trivy:ignore suppressions in its output (confirmed by inspecting
+      # a local SARIF file: 7 findings all showed suppressed=false despite
+      # Trivy's own log saying "Ignore finding" for every one of them,
+      # a real gap in Trivy v0.70.0's SARIF formatter, not a config
+      # mistake here). format: table correctly honors ignores. So: table
+      # format is what actually gates the build; SARIF format is
+      # upload-only and never fails it.
+      - name: Trivy IaC security scan (build gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "config"
+          scan-ref: ${{ env.TF_WORKING_DIR }}
+          format: "table"
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"
+
+      - name: Trivy IaC security scan (SARIF for Security tab)
+        if: always()
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: "config"
           scan-ref: ${{ env.TF_WORKING_DIR }}
           format: "sarif"
           output: "trivy-results.sarif"
-          exit-code: "1"
           severity: "CRITICAL,HIGH"
 
       - name: Upload Trivy results to Security tab
