@@ -10,10 +10,13 @@
 # CMK which runs ~$1/mo) - flagged by Trivy (AWS-0095) as unencrypted
 # otherwise. Publishing to an encrypted topic needs kms:GenerateDataKey +
 # kms:Decrypt in addition to sns:Publish - see step_functions.tf.
-
-data "aws_kms_alias" "sns" {
-  name = "alias/aws/sns"
-}
+#
+# No data "aws_kms_alias" lookup here on purpose: alias/aws/sns is created
+# lazily by AWS the first time an account actually encrypts an SNS topic
+# with it, so a data source can't find it before that first apply - it's
+# referenced directly by its predictable ARN pattern instead (region +
+# account + fixed name), which needs no lookup and becomes valid the
+# moment these topics are created.
 
 # ----------------------------------------------
 # SUCCESS TOPIC

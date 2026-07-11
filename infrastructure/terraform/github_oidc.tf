@@ -223,18 +223,6 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
         Effect   = "Allow"
         Action   = "sts:GetCallerIdentity"
         Resource = "*"
-      },
-      {
-        # Read-only - needed for the data "aws_kms_alias" "sns" lookup in
-        # sns.tf (AWS-managed key, no project102-* name to scope by, and
-        # ListAliases doesn't support resource-level restriction anyway).
-        Sid    = "ReadAwsManagedKmsAlias"
-        Effect = "Allow"
-        Action = [
-          "kms:ListAliases",
-          "kms:DescribeKey"
-        ]
-        Resource = "*"
       }
     ]
   })
