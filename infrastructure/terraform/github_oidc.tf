@@ -90,18 +90,18 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "TerraformStateBackend"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
+        Sid    = "TerraformStateBackend"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]
         Resource = [
           "arn:aws:s3:::project102-s3-terraform-state",
           "arn:aws:s3:::project102-s3-terraform-state/*"
         ]
       },
       {
-        Sid      = "S3DataBuckets"
-        Effect   = "Allow"
-        Action   = "s3:*"
+        Sid    = "S3DataBuckets"
+        Effect = "Allow"
+        Action = "s3:*"
         Resource = [
           "arn:aws:s3:::project102-*",
           "arn:aws:s3:::project102-*/*"
@@ -123,9 +123,9 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
         Resource = "*"
       },
       {
-        Sid      = "GlueETL"
-        Effect   = "Allow"
-        Action   = "glue:*"
+        Sid    = "GlueETL"
+        Effect = "Allow"
+        Action = "glue:*"
         Resource = [
           "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
           "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/${var.project_name}*",
