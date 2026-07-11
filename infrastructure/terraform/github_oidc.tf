@@ -128,7 +128,10 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
           "s3:GetObjectTagging",
           "s3:PutObjectTagging",
           "s3:GetObjectVersion",
-          "s3:DeleteObjectVersion"
+          "s3:DeleteObjectVersion",
+          # Read-back after create - the AWS provider checks a bucket's
+          # policy status even though none of our buckets set one.
+          "s3:GetBucketPolicy"
         ]
         Resource = [
           "arn:aws:s3:::project102-*",
@@ -146,7 +149,10 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
           "ec2:*Subnet*",
           "ec2:*SecurityGroup*",
           "ec2:*Tags",
-          "ec2:DescribeAvailabilityZones"
+          "ec2:DescribeAvailabilityZones",
+          # Needed to resolve the S3 Gateway Endpoint's service name to a
+          # prefix list ID - read-only AWS-wide lookup, no resource scoping.
+          "ec2:DescribePrefixLists"
         ]
         Resource = "*"
       },
@@ -204,6 +210,18 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
         Effect   = "Allow"
         Action   = "states:*"
         Resource = "arn:aws:states:${var.aws_region}:${data.aws_caller_identity.current.account_id}:stateMachine:${var.project_name}-*"
+      },
+      {
+        # ValidateStateMachineDefinition runs before the resource has a
+        # name/ARN of its own (that's the whole point - it's checking the
+        # definition is well-formed prior to creation), so AWS always
+        # calls it against a generic stateMachine:* pattern regardless of
+        # what you're about to name the real resource. Can't be scoped
+        # to project102-* the way the statement above is.
+        Sid      = "ValidateStateMachineDefinition"
+        Effect   = "Allow"
+        Action   = "states:ValidateStateMachineDefinition"
+        Resource = "*"
       },
       {
         Sid      = "SecretsManager"
