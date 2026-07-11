@@ -1,0 +1,201 @@
+name: Terraform CI/CD
+# CI (job: plan) runs on every PR - validates, security-scans, and shows
+# what would change. Never touches AWS state.
+# CD (job: apply) runs on every push to main (i.e. every merge) - actually
+# deploys. Safe to run with no manual approval click because merge itself
+# is gated by branch protection requiring the plan job's checks to pass
+# (see repo Settings > Branches once this workflow has run once).
+#
+# Note: id-token/secrets are withheld by GitHub for pull_request events
+# coming from forks, by design (prevents a malicious fork PR from
+# exfiltrating your AWS credentials). Not a concern for a solo-maintainer
+# repo with no external fork contributions, but worth knowing.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infrastructure/terraform/**"
+      - "glue_jobs/**"
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/terraform/**"
+      - "glue_jobs/**"
+
+permissions:
+  id-token: write        # mint the short-lived OIDC token for AWS
+  contents: read          # actions/checkout
+  pull-requests: write     # post the plan output as a PR comment
+  security-events: write   # upload the Trivy SARIF to the Security tab
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: arn:aws:iam::451523008307:role/project102-github-actions-role
+  TF_WORKING_DIR: infrastructure/terraform
+  TF_VERSION: 1.15.2
+
+jobs:
+  # ------------------------------------------------------------------
+  # CI - runs on every PR against main. Read-only against AWS (plan
+  # only calls Describe/Get/List actions to diff against real state -
+  # it does not create/modify/delete anything).
+  # ------------------------------------------------------------------
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      # The "safety checker" - scans the actual Terraform config (not
+      # just syntax) for dangerous-but-valid patterns: public S3 buckets,
+      # open security groups, missing encryption, etc. Fails the job
+      # (and therefore, once branch protection is on, blocks the merge)
+      # on CRITICAL/HIGH findings. Same engine/check IDs as the
+      # now-deprecated tfsec, under Aqua Security's Trivy.
+      # Two separate Trivy runs, not one - format: sarif does NOT reflect
+      # #trivy:ignore suppressions in its output (confirmed by inspecting
+      # a local SARIF file: 7 findings all showed suppressed=false despite
+      # Trivy's own log saying "Ignore finding" for every one of them,
+      # a real gap in Trivy v0.70.0's SARIF formatter, not a config
+      # mistake here). format: table correctly honors ignores. So: table
+      # format is what actually gates the build; SARIF format is
+      # upload-only and never fails it.
+      - name: Trivy IaC security scan (build gate)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "config"
+          scan-ref: ${{ env.TF_WORKING_DIR }}
+          format: "table"
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"
+
+      - name: Trivy IaC security scan (SARIF for Security tab)
+        if: always()
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: "config"
+          scan-ref: ${{ env.TF_WORKING_DIR }}
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH"
+
+      - name: Upload Trivy results to Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: "trivy-results.sarif"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -no-color -input=false
+        continue-on-error: true
+
+      # Posts (or updates) a single PR comment with the plan output,
+      # using env: to pass the multi-line plan text safely instead of
+      # interpolating it directly into the script - avoids the plan
+      # output breaking the script if it happens to contain backticks
+      # or ${...} sequences.
+      - name: Comment plan on PR
+        uses: actions/github-script@v7
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          script: |
+            const output = `#### Terraform Plan: \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show plan</summary>
+
+            \`\`\`terraform
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            *Triggered by @${{ github.actor }} on \`${{ github.event_name }}\`*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('#### Terraform Plan:')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: output,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: output,
+              });
+            }
+
+      - name: Fail if plan errored
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ------------------------------------------------------------------
+  # CD - runs on every push to main, i.e. every merge. No manual
+  # approval gate: safety comes from branch protection requiring the
+  # plan job above to pass (fmt, validate, Trivy, plan) before a PR
+  # can be merged in the first place.
+  # ------------------------------------------------------------------
+  apply:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false
+
+      - name: Terraform Apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve -input=false

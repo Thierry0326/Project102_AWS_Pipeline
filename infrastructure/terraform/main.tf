@@ -8,6 +8,12 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    # Only used to fetch GitHub's current OIDC TLS cert thumbprint in
+    # github_oidc.tf - not a cloud provider, just a data-fetching helper
+    tls = {
+      source  = "hashicorp/tls"
+      version = "~> 4.0"
+    }
   }
 
   required_version = ">= 1.5.0"

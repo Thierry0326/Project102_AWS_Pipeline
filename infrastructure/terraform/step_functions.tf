@@ -74,6 +74,21 @@ resource "aws_iam_role_policy" "step_functions_glue" {
         ]
       },
       {
+        # sns.tf's topics use KMS encryption (alias/aws/sns) - sns:Publish
+        # alone is not enough once a topic is encrypted, the publisher also
+        # needs to generate/decrypt the data key used for that message.
+        # Referenced by alias ARN, not a data-source-resolved key ARN -
+        # see sns.tf for why. IAM identity policies (unlike KMS key resource
+        # policies) can reference a KMS key by alias ARN directly.
+        Sid    = "EncryptedTopicKmsAccess"
+        Effect = "Allow"
+        Action = [
+          "kms:GenerateDataKey",
+          "kms:Decrypt"
+        ]
+        Resource = "arn:aws:kms:${var.aws_region}:${data.aws_caller_identity.current.account_id}:alias/aws/sns"
+      },
+      {
         # Required for the .sync Glue integration pattern —
         # Step Functions needs to react to Glue's own EventBridge events
         # to know when a job run actually finishes

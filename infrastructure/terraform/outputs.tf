@@ -112,3 +112,8 @@ output "sns_failure_topic_arn" {
   description = "ARN of the SNS topic notified when any pipeline state fails"
   value       = aws_sns_topic.pipeline_failure.arn
 }
+
+output "github_actions_role_arn" {
+  description = "IAM role ARN GitHub Actions assumes via OIDC to run terraform plan/apply"
+  value       = aws_iam_role.github_actions.arn
+}
