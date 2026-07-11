@@ -46,13 +46,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "bronze" {
     id     = "move-to-glacier"
     status = "Enabled"
 
-      filter {
+    filter {
       prefix = ""
     }
 
     transition {
       days          = 30
-      storage_class = "GLACIER_IR"  # Glacier Instant Retrieval
+      storage_class = "GLACIER_IR" # Glacier Instant Retrieval
     }
   }
 }
