@@ -64,3 +64,24 @@ resource "aws_s3_object" "job_gold_model" {
   source = "${path.module}/../../glue_jobs/job_gold_model.py"
   etag   = filemd5("${path.module}/../../glue_jobs/job_gold_model.py")
 }
+
+resource "aws_s3_object" "job_validate_bronze" {
+  bucket = aws_s3_bucket.glue_scripts.id
+  key    = "jobs/job_validate_bronze.py"
+  source = "${path.module}/../../glue_jobs/job_validate_bronze.py"
+  etag   = filemd5("${path.module}/../../glue_jobs/job_validate_bronze.py")
+}
+
+resource "aws_s3_object" "job_validate_silver" {
+  bucket = aws_s3_bucket.glue_scripts.id
+  key    = "jobs/job_validate_silver.py"
+  source = "${path.module}/../../glue_jobs/job_validate_silver.py"
+  etag   = filemd5("${path.module}/../../glue_jobs/job_validate_silver.py")
+}
+
+resource "aws_s3_object" "job_validate_gold" {
+  bucket = aws_s3_bucket.glue_scripts.id
+  key    = "jobs/job_validate_gold.py"
+  source = "${path.module}/../../glue_jobs/job_validate_gold.py"
+  etag   = filemd5("${path.module}/../../glue_jobs/job_validate_gold.py")
+}
