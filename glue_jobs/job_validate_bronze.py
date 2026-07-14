@@ -67,10 +67,19 @@ validator = context.get_validator(
     expectation_suite_name="bronze_suite",
 )
 
-# World Bank record shape: country {id,value}, indicator {id,value}, date, value, _ingested_at
+# Full World Bank record shape (verified against a live API response, not
+# assumed): indicator {id,value}, country {id,value}, countryiso3code,
+# date, value, unit, obs_status, decimal, plus _ingested_at that we add.
+# Great Expectations' Spark engine reports nested struct fields both as
+# the parent column ("country") and flattened dot-paths ("country.id",
+# "country.value") - both need to be listed, not just the parent.
 validator.expect_table_row_count_to_be_between(min_value=1)
 validator.expect_table_columns_to_match_set(
-    column_set=["country", "indicator", "date", "value", "_ingested_at"]
+    column_set=[
+        "_ingested_at", "country", "country.id", "country.value",
+        "countryiso3code", "date", "decimal", "indicator", "indicator.id",
+        "indicator.value", "obs_status", "unit", "value",
+    ]
 )
 # We set this ourselves unconditionally in job_bronze_ingest.py - if it's
 # ever null, something upstream of us silently broke
