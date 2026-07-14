@@ -12,11 +12,13 @@ name: Terraform CI/CD
 # repo with no external fork contributions, but worth knowing.
 
 on:
+  # No path filter here on purpose: plan is a required branch-protection
+  # check, so it has to run on every PR regardless of what changed. A
+  # path-filtered required check that never fires on a docs-only PR just
+  # sits stuck on "Waiting for status to be reported" forever - found this
+  # the hard way on the PR that added this very comment.
   pull_request:
     branches: [main]
-    paths:
-      - "infrastructure/terraform/**"
-      - "glue_jobs/**"
   push:
     branches: [main]
     paths:
