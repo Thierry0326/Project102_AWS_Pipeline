@@ -99,39 +99,32 @@ resource "aws_iam_role_policy" "github_actions_terraform" {
         ]
       },
       {
-        # Enumerated instead of s3:* (Trivy AWS-0345) - s3:* includes
-        # bucket-management actions (ACLs, bucket policy) well beyond what
-        # Terraform actually calls for the resources in s3.tf and
-        # s3_glue_scripts_append.tf. Not a guarantee this list is
-        # exhaustive - a missing action would surface as AccessDenied in
-        # CI, same as any other permission gap in this project got found.
+        # s3:Get* instead of enumerating individual read actions - the AWS
+        # provider's aws_s3_bucket resource calls a long, not-fully-
+        # documented batch of Get* APIs on every refresh (ACL, policy,
+        # CORS, website, logging, replication, object-lock config, and
+        # more), independent of which of those we actually declared a
+        # resource for. Enumerating them one at a time cost 2 CI round
+        # trips (GetBucketPolicy, then GetBucketAcl) before this - s3:Get*
+        # is a safe wildcard specifically because every action in that
+        # namespace is read-only, unlike s3:* (Trivy AWS-0345), which
+        # still needs the explicit list below for mutation actions.
         Sid    = "S3DataBuckets"
         Effect = "Allow"
         Action = [
           "s3:CreateBucket",
           "s3:DeleteBucket",
           "s3:ListBucket",
-          "s3:GetBucketLocation",
-          "s3:GetBucketTagging",
+          "s3:Get*",
           "s3:PutBucketTagging",
-          "s3:GetBucketVersioning",
           "s3:PutBucketVersioning",
-          "s3:GetLifecycleConfiguration",
           "s3:PutLifecycleConfiguration",
-          "s3:GetEncryptionConfiguration",
           "s3:PutEncryptionConfiguration",
-          "s3:GetBucketPublicAccessBlock",
           "s3:PutBucketPublicAccessBlock",
-          "s3:GetObject",
           "s3:PutObject",
           "s3:DeleteObject",
-          "s3:GetObjectTagging",
           "s3:PutObjectTagging",
-          "s3:GetObjectVersion",
-          "s3:DeleteObjectVersion",
-          # Read-back after create - the AWS provider checks a bucket's
-          # policy status even though none of our buckets set one.
-          "s3:GetBucketPolicy"
+          "s3:DeleteObjectVersion"
         ]
         Resource = [
           "arn:aws:s3:::project102-*",
