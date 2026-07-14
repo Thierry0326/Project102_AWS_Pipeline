@@ -1,5 +1,5 @@
 {
-  "Comment": "Project 102 pipeline: Bronze ingest -> Silver transform -> Gold model -> Crawl & Catalog -> Notify. Mirrors the Project 101 Airflow DAG (extract -> load -> transform -> load -> validate -> notify) but as native AWS state with built-in retry. Each crawler poll loop is capped at 20 attempts (~10 min) so a stuck crawler fails loudly instead of polling forever.",
+  "Comment": "Project 102 pipeline: Bronze ingest -> Validate -> Silver transform -> Validate -> Gold model -> Validate -> Crawl & Catalog -> Notify. Mirrors the Project 101 Airflow DAG (extract -> load -> transform -> load -> validate -> notify) but as native AWS state with built-in retry, and validates after every layer instead of once at the end. Each crawler poll loop is capped at 20 attempts (~10 min) so a stuck crawler fails loudly instead of polling forever.",
   "StartAt": "BronzeIngest",
   "States": {
     "BronzeIngest": {
@@ -7,6 +7,30 @@
       "Resource": "arn:aws:states:::glue:startJobRun.sync",
       "Parameters": {
         "JobName": "project102-bronze-ingest"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "ValidateBronze"
+    },
+
+    "ValidateBronze": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "project102-validate-bronze"
       },
       "Retry": [
         {
@@ -47,6 +71,30 @@
           "Next": "NotifyFailure"
         }
       ],
+      "Next": "ValidateSilver"
+    },
+
+    "ValidateSilver": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "project102-validate-silver"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
       "Next": "GoldModel"
     },
 
@@ -55,6 +103,30 @@
       "Resource": "arn:aws:states:::glue:startJobRun.sync",
       "Parameters": {
         "JobName": "project102-gold-model"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "NotifyFailure"
+        }
+      ],
+      "Next": "ValidateGold"
+    },
+
+    "ValidateGold": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun.sync",
+      "Parameters": {
+        "JobName": "project102-validate-gold"
       },
       "Retry": [
         {
@@ -389,7 +461,7 @@
       "Parameters": {
         "TopicArn": "${success_topic_arn}",
         "Subject": "Project 102 Pipeline SUCCESS",
-        "Message": "Bronze -> Silver -> Gold -> Crawlers all completed successfully. Data is fresh in Athena."
+        "Message": "Bronze -> Silver -> Gold -> Crawlers all completed successfully, data quality validated at every layer. Data is fresh in Athena."
       },
       "End": true
     },
